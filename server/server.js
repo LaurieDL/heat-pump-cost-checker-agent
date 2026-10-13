@@ -144,6 +144,7 @@ export function createApp(cfg = readConfig(), { core = loadCore(), fetchImpl = f
           core,
           messages: req.body.messages,
           details: req.body.details,
+          asked: req.body.asked,
           apiKey: cfg.apiKey,
           model: cfg.model,
           maxTokens: cfg.maxTokens,

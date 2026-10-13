@@ -12,7 +12,9 @@ function fakeAnthropic() {
     calls.push({ url, headers: init.headers, body });
     const lastUser = body.messages.at(-1);
     const sawToolResults = Array.isArray(lastUser.content) && lastUser.content[0]?.type === 'tool_result';
-    const payload = sawToolResults
+    const payload = body.tool_choice?.name === 'ask_visitor'
+      ? { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'q1', name: 'ask_visitor', input: { field: 'annualHeatingCostGbp', question: 'Roughly what do you spend a year on heating?' } }] }
+      : sawToolResults
       ? { stop_reason: 'end_turn', content: [{ type: 'text', text: 'About £2,990 to £7,230 after the grant.' }] }
       : {
         stop_reason: 'tool_use',
@@ -56,11 +58,14 @@ test('chat runs the tool loop and returns details, checks and the answer', async
     assert.equal(data.details.nation, 'england');
     assert.ok(data.checks.length >= 3);
 
-    assert.equal(api.calls.length, 2);
+    // Saved details leave the optional yearly spend missing, so the loop makes it ask.
+    assert.equal(api.calls.length, 3);
+    assert.equal(data.question.field, 'annualHeatingCostGbp');
+    assert.deepEqual(data.asked, { annualHeatingCostGbp: 1 });
     const [first, second] = api.calls;
     assert.equal(first.headers['x-api-key'], 'test-key');
     assert.match(first.body.system, /heat pump cost assistant/);
-    assert.deepEqual(first.body.tools.map((t) => t.name), ['update_home_details', 'estimate_heat_pump', 'compare_scenario']);
+    assert.deepEqual(first.body.tools.map((t) => t.name), ['update_home_details', 'estimate_heat_pump', 'compare_scenario', 'ask_visitor']);
     const results = second.body.messages.at(-1).content;
     assert.equal(results.length, 2);
     assert.equal(JSON.parse(results[1].content).installAfterGrant.low, 2990);
@@ -176,4 +181,102 @@ test('static files and security headers', async () => {
     assert.equal((await fetch(base + '/.env')).status, 404);
     assert.equal((await fetch(base + '/')).headers.get('x-powered-by'), null);
   });
+});
+
+// ── The question loop ─────────────────────────────────────────
+
+import { runChatTurn } from '../server/agent.js';
+import { loadCore } from '../core/load-core.js';
+
+const loopCore = loadCore();
+const ok = (payload) => new Response(JSON.stringify(payload), { status: 200 });
+const INVERNESS_SAYS = [{ role: 'user', content: 'Detached bungalow near Inverness on oil, no mains gas' }];
+const recordInverness = {
+  stop_reason: 'tool_use',
+  content: [{ type: 'tool_use', id: 'u1', name: 'update_home_details', input: { place: 'Inverness', nation: 'scotland', propertyType: 'bungalow', currentHeating: 'oil', hasMainsGas: false } }],
+};
+
+/** A fake API that plays back scripted replies and records each request. */
+function scripted(replies) {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push(JSON.parse(init.body));
+    const next = replies[calls.length - 1];
+    if (!next) throw new Error(`unexpected call ${calls.length}`);
+    return ok(typeof next === 'function' ? next(calls.at(-1)) : next);
+  };
+  return { calls, fetchImpl };
+}
+
+test('loop: the assistant asks the next missing detail and the turn ends there', async () => {
+  const api = scripted([
+    recordInverness,
+    {
+      stop_reason: 'tool_use',
+      content: [
+        { type: 'text', text: 'Thanks, Inverness noted. The Home Energy Scotland grant could apply.' },
+        { type: 'tool_use', id: 'a1', name: 'ask_visitor', input: { field: 'bedrooms', question: 'How many bedrooms does the bungalow have?' } },
+      ],
+    },
+  ]);
+  const r = await runChatTurn({ core: loopCore, messages: INVERNESS_SAYS, details: {}, asked: {}, apiKey: 'k', model: 'm', fetchImpl: api.fetchImpl });
+  assert.equal(api.calls.length, 2, 'no further call after the question');
+  assert.equal(r.question.field, 'bedrooms');
+  assert.equal(r.question.question, 'How many bedrooms does the bungalow have?');
+  assert.equal(r.question.replies.length, 5);
+  assert.deepEqual(r.asked, { bedrooms: 1 });
+  assert.match(r.text, /Inverness noted/);
+  assert.equal(r.details.nation, 'scotland');
+});
+
+test('loop: ending a turn with gaps and no question triggers a forced ask_visitor round', async () => {
+  const api = scripted([
+    recordInverness,
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Thanks, I have noted your bungalow in Inverness.' }] },
+    (body) => {
+      assert.deepEqual(body.tool_choice, { type: 'tool', name: 'ask_visitor' }, 'the nudge forces a question');
+      assert.match(body.messages.at(-1).content, /still missing.*bedrooms/);
+      return { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'a1', name: 'ask_visitor', input: { field: 'bedrooms', question: 'How many bedrooms?' } }] };
+    },
+  ]);
+  const r = await runChatTurn({ core: loopCore, messages: INVERNESS_SAYS, details: {}, apiKey: 'k', model: 'm', fetchImpl: api.fetchImpl });
+  assert.equal(api.calls.length, 3);
+  assert.equal(r.text, 'Thanks, I have noted your bungalow in Inverness.');
+  assert.equal(r.question.field, 'bedrooms');
+});
+
+test('loop: if the assistant still asks nothing, a fixed question fills the gap', async () => {
+  const api = scripted([
+    recordInverness,
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Noted.' }] },
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Noted.' }] },
+  ]);
+  const r = await runChatTurn({ core: loopCore, messages: INVERNESS_SAYS, details: {}, apiKey: 'k', model: 'm', fetchImpl: api.fetchImpl });
+  assert.equal(r.question.field, 'bedrooms');
+  assert.equal(r.question.question, 'How many bedrooms does it have?');
+  assert.deepEqual(r.asked, { bedrooms: 1 });
+});
+
+test('loop: once optional questions are used up, it stops asking', async () => {
+  const complete = { nation: 'england', propertyType: 'semi_detached', bedrooms: 3, currentHeating: 'gas' };
+  const api = scripted([{ stop_reason: 'end_turn', content: [{ type: 'text', text: 'It costs about the same to run as gas.' }] }]);
+  const r = await runChatTurn({
+    core: loopCore, messages: [{ role: 'user', content: 'Is it cheaper than gas?' }],
+    details: complete, asked: { ownership: 2, annualHeatingCostGbp: 1 }, apiKey: 'k', model: 'm', fetchImpl: api.fetchImpl,
+  });
+  assert.equal(api.calls.length, 1, 'no nudge when nothing is left to ask');
+  assert.equal(r.question, null);
+});
+
+test('loop: a second question in one turn is refused', async () => {
+  const api = scripted([{
+    stop_reason: 'tool_use',
+    content: [
+      { type: 'tool_use', id: 'a1', name: 'ask_visitor', input: { field: 'place', question: 'Where is it?' } },
+      { type: 'tool_use', id: 'a2', name: 'ask_visitor', input: { field: 'bedrooms', question: 'How many bedrooms?' } },
+    ],
+  }]);
+  const r = await runChatTurn({ core: loopCore, messages: [{ role: 'user', content: 'hi' }], details: {}, apiKey: 'k', model: 'm', fetchImpl: api.fetchImpl });
+  assert.equal(r.question.field, 'place');
+  assert.deepEqual(r.asked, { place: 1 });
 });

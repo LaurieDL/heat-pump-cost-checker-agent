@@ -2,7 +2,7 @@
 // The chat and the form edit the same details. Every figure on the page is
 // computed here by HeatPumpCore.estimate(); the assistant only fills in the
 // details and explains. The transport decides where the agent runs.
-import { FIELD_OPTIONS, sanitizeDetails, missingFields, runEstimate } from '/shared/agent-tools.js';
+import { FIELD_OPTIONS, sanitizeDetails, sanitizeAsked, missingFields, runEstimate, findGaps } from '/shared/agent-tools.js';
 import { renderEstimate, formatReply, renderChecks } from './render.js';
 import { createTransport } from './transport.js';
 
@@ -30,7 +30,11 @@ const FOLLOW_CHIPS = [
   'What happens at the survey?',
 ];
 
-const state = { details: {}, turns: [], showResult: false, busy: false, controller: null, chatOn: true };
+const DEFAULT_PLACEHOLDER = 'e.g. 3-bed semi in York, gas combi, about £1,100 a year';
+// Which form boxes to mark for each missing detail.
+const GAP_FORM_FIELDS = { place: ['place', 'nation'] };
+
+const state = { details: {}, asked: {}, turns: [], showResult: false, busy: false, controller: null, chatOn: true, started: false };
 const transport = createTransport({ core });
 
 // ── Form ────────────────────────────────────────────────────
@@ -66,6 +70,7 @@ function writeForm(details, flash = []) {
   }
   const oilOrLpg = details.currentHeating === 'oil' || details.currentHeating === 'lpg';
   els.mainsField.hidden = !oilOrLpg;
+  markGaps(details);
   els.count.textContent = `${COUNTED.filter((f) => details[f] !== undefined).length} of ${COUNTED.length}`;
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   for (const field of flash) {
@@ -74,6 +79,19 @@ function writeForm(details, flash = []) {
     box.classList.remove('just-set');
     void box.offsetWidth; // restart the animation
     box.classList.add('just-set');
+  }
+}
+
+/** Mark the form boxes the assistant still needs, once the visitor has started. */
+function markGaps(details) {
+  for (const box of els.form.querySelectorAll('[data-field]')) delete box.dataset.gap;
+  if (!state.started) return;
+  // Respect what's been asked: a skipped optional detail stops being flagged.
+  for (const gap of findGaps(details, state.asked)) {
+    for (const f of GAP_FORM_FIELDS[gap.field] ?? [gap.field]) {
+      const box = els.form.querySelector(`[data-field="${f}"]`);
+      if (box && (f !== 'nation' || details.nation === undefined)) box.dataset.gap = gap.required ? 'needed' : 'optional';
+    }
   }
 }
 
@@ -92,6 +110,7 @@ let formTimer;
 function onFormEdit() {
   clearTimeout(formTimer);
   formTimer = setTimeout(() => {
+    state.started = true;
     const { details } = sanitizeDetails(readForm(), {});
     setDetails(details);
   }, 150);
@@ -111,6 +130,7 @@ function renderResult() {
 }
 
 function showEstimateFromForm() {
+  state.started = true;
   const { details } = sanitizeDetails(readForm(), {});
   setDetails(details);
   const missing = missingFields(details);
@@ -189,7 +209,9 @@ function turnsToSend() {
 async function sendMessage(raw) {
   const text = raw.trim().slice(0, 1200);
   if (!text || state.busy || !state.chatOn) return;
+  state.started = true;
   els.input.value = '';
+  els.input.placeholder = DEFAULT_PLACEHOLDER;
   autoGrow();
   addUser(text);
   state.turns.push({ role: 'user', content: text });
@@ -205,6 +227,7 @@ async function sendMessage(raw) {
     const result = await transport.send({
       messages: turnsToSend(),
       details: state.details,
+      asked: state.asked,
       signal: controller.signal,
       onText: (t) => { bubble.innerHTML = formatReply(t); scrollLog(); },
       onCheck: (c) => {
@@ -214,18 +237,25 @@ async function sendMessage(raw) {
       },
     });
     if (controller.signal.aborted) return;
-    bubble.innerHTML = formatReply(result.text);
-    state.turns.push({ role: 'assistant', content: result.text });
+    const question = result.question?.question ? result.question : null;
+    if (result.text) bubble.innerHTML = formatReply(result.text);
+    else bubble.closest('.msg').remove();
+    // The model sees its own question next turn, so keep it in the history.
+    state.turns.push({ role: 'assistant', content: [result.text, question?.question].filter(Boolean).join('\n\n') || '…' });
     if (!checksBox) checksBox = addChecks(result.checks ?? []);
     else { checksBox.remove(); checksBox = addChecks(result.checks ?? liveChecks); }
-    if (result.estimated) state.showResult = true;
-    setDetails(sanitizeDetails(result.details ?? {}, {}).details, { flash: true });
-    if (result.estimated) renderResult();
-    setChips(state.showResult ? FOLLOW_CHIPS : START_CHIPS.slice(0, 1));
+    state.asked = sanitizeAsked(result.asked);
+    const details = sanitizeDetails(result.details ?? {}, {}).details;
+    // Show the estimate as soon as the required details are in, whoever filled them.
+    if (result.estimated || missingFields(details).length === 0) state.showResult = true;
+    setDetails(details, { flash: true }); // re-renders the estimate when it's showing
+    if (question) askQuestion(question);
+    else setChips(state.showResult ? FOLLOW_CHIPS : START_CHIPS.slice(0, 1));
   } catch (err) {
     if (err?.code === 'cancelled' || controller.signal.aborted) return;
     // Keep any details the assistant saved before the failure.
     if (err?.details) setDetails(sanitizeDetails(err.details, {}).details, { flash: true });
+    if (err?.asked) state.asked = sanitizeAsked(err.asked);
     if (err?.partial) bubble.innerHTML = formatReply(err.partial);
     else bubble.closest('.msg').remove();
     state.turns.pop(); // keep the history alternating; the visitor can resend
@@ -238,11 +268,23 @@ async function sendMessage(raw) {
   }
 }
 
+/** Show the assistant's question with tap-to-answer replies. */
+function askQuestion(q) {
+  const bubble = addAgent(formatReply(q.question));
+  bubble.classList.add('is-question');
+  setChips(q.replies ?? []);
+  els.input.placeholder = q.replies?.length ? 'Tap an answer or type your own' : 'Type your answer';
+  if (!matchMedia('(max-width: 899px)').matches) els.input.focus({ preventScroll: true });
+}
+
 function resetAll() {
   state.controller?.abort();
   state.controller = null;
   state.turns = [];
+  state.asked = {};
+  state.started = false;
   state.showResult = false;
+  els.input.placeholder = DEFAULT_PLACEHOLDER;
   els.log.innerHTML = '';
   els.form.reset();
   setDetails({});

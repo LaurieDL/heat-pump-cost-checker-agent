@@ -67,7 +67,8 @@ test('tools: update, estimate, what-if', () => {
   const [update, estimate, compare] = tools;
 
   const r1 = update.execute({ place: 'Leicester', nation: 'england', propertyType: 'semi_detached' });
-  assert.deepEqual(r1.missingForEstimate, ['bedrooms', 'currentHeating']);
+  assert.equal(r1.readyToEstimate, false);
+  assert.deepEqual(r1.stillToAsk.map((g) => g.field), ['bedrooms', 'currentHeating', 'ownership', 'annualHeatingCostGbp']);
   assert.throws(() => estimate.execute({}), /Still need: bedrooms, currentHeating/);
 
   update.execute({ bedrooms: 3, currentHeating: 'gas', annualHeatingCostGbp: 1100, ownership: 'owner_occupier' });
@@ -95,4 +96,64 @@ test('missingFields and prompt', () => {
   const p = buildSystemPrompt({ details: { bedrooms: 3 }, today: TODAY });
   assert.match(p, /Today is 2026-10-13/);
   assert.match(p, /"bedrooms":3/);
+});
+
+// ── Gaps and questions ─────────────────────────────────────────
+
+import { findGaps, sanitizeAsked, fallbackQuestion } from '../shared/agent-tools.js';
+
+// The example from the screenshot: Inverness, bungalow, oil, no mains gas.
+const INVERNESS = { place: 'Inverness', nation: 'scotland', propertyType: 'bungalow', currentHeating: 'oil', hasMainsGas: false };
+
+test('gaps: the Inverness example is missing bedrooms, ownership and spend, in that order', () => {
+  assert.deepEqual(findGaps(INVERNESS).map((g) => g.field), ['bedrooms', 'ownership', 'annualHeatingCostGbp']);
+  assert.equal(findGaps(INVERNESS)[0].required, true);
+  assert.deepEqual(findGaps(INVERNESS)[0].replies, ['1 bedroom', '2 bedrooms', '3 bedrooms', '4 bedrooms', '5 or more bedrooms']);
+});
+
+test('gaps: where the home is, mains gas only for oil/LPG, and nothing once complete', () => {
+  assert.equal(findGaps({})[0].field, 'place');
+  assert.equal(findGaps({ nation: 'wales' }).some((g) => g.field === 'place'), false, 'a known nation is enough');
+  assert.ok(findGaps({ ...SEMI, currentHeating: 'lpg' }).some((g) => g.field === 'hasMainsGas'));
+  assert.equal(findGaps(SEMI).some((g) => g.field === 'hasMainsGas'), false);
+  assert.deepEqual(findGaps({ ...SEMI, annualHeatingCostGbp: 1100 }), []);
+});
+
+test('gaps: optional details stop being asked after their limit, required ones never do', () => {
+  const asked = { ownership: 2, annualHeatingCostGbp: 1, bedrooms: 9 };
+  assert.deepEqual(findGaps(INVERNESS, asked).map((g) => g.field), ['bedrooms']);
+  assert.deepEqual(findGaps(INVERNESS, { ownership: 1 }).map((g) => g.field), ['bedrooms', 'ownership', 'annualHeatingCostGbp']);
+});
+
+test('sanitizeAsked keeps only known fields and sensible counts', () => {
+  assert.deepEqual(sanitizeAsked({ bedrooms: 2, ownership: '1', hack: 5, place: -3, annualHeatingCostGbp: 1e9 }), { bedrooms: 2, ownership: 1, annualHeatingCostGbp: 20 });
+  assert.deepEqual(sanitizeAsked(null), {});
+});
+
+test('ask_visitor records the question, counts it, and refuses known details', () => {
+  let details = { ...INVERNESS };
+  let asked = {};
+  let question = null;
+  const tools = createAgentTools({
+    core, today: TODAY,
+    getDetails: () => details, setDetails: (d) => { details = d; },
+    getAsked: () => asked, setAsked: (a) => { asked = a; }, onQuestion: (q) => { question = q; },
+  });
+  const ask = tools.find((t) => t.name === 'ask_visitor');
+  assert.throws(() => ask.execute({ field: 'propertyType', question: 'What kind of home?' }), /already known/);
+  assert.throws(() => ask.execute({ field: 'shoeSize', question: 'x' }), /Unknown field/);
+  const out = ask.execute({ field: 'bedrooms', question: 'How many bedrooms does it have?' });
+  assert.equal(out.shown, true);
+  assert.deepEqual(asked, { bedrooms: 1 });
+  assert.equal(question.field, 'bedrooms');
+  assert.equal(question.replies.length, 5);
+});
+
+test('fallbackQuestion asks the first gap with a fixed question, or nothing', () => {
+  const asked = {};
+  const q = fallbackQuestion(INVERNESS, asked);
+  assert.equal(q.field, 'bedrooms');
+  assert.match(q.question, /bedrooms/);
+  assert.deepEqual(asked, { bedrooms: 1 });
+  assert.equal(fallbackQuestion({ ...SEMI, annualHeatingCostGbp: 900 }, {}), null);
 });

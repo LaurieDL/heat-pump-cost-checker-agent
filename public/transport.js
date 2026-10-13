@@ -13,15 +13,15 @@ export function createTransport() {
     async available() { return true; },
 
     /**
-     * @returns {Promise<{text: string, details: object, checks: Array, estimated: boolean}>}
+     * @returns {Promise<{text: string, details: object, asked: object, question: object|null, checks: Array, estimated: boolean}>}
      */
-    async send({ messages, details, signal }) {
+    async send({ messages, details, asked, signal }) {
       let res;
       try {
         res = await fetch(`${apiBase()}/api/chat`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ messages, details }),
+          body: JSON.stringify({ messages, details, asked }),
           signal,
         });
       } catch (err) {
