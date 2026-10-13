@@ -1,29 +1,25 @@
 // Heat pump cost checker agent: serves the page and POST /api/chat.
-// Zero dependencies. Configure with environment variables (see .env.example).
+// Express app; configure with environment variables (see .env.example).
 import http from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import express from 'express';
 import { loadCore } from '../core/load-core.js';
 import { runChatTurn, AgentError } from './agent.js';
 import { createRateLimiter } from './rate-limit.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-
-// Only these folders are ever served, each under its own URL prefix.
-const STATIC_ROOTS = [
-  { prefix: '/shared/', dir: path.join(ROOT, 'shared') },
-  { prefix: '/core/', dir: path.join(ROOT, 'core'), only: ['heat-pump-core.js'] },
-  { prefix: '/', dir: path.join(ROOT, 'public') },
-];
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon' };
+const PUBLIC_DIR = path.join(ROOT, 'public');
+const SHARED_DIR = path.join(ROOT, 'shared');
+const CORE_FILE = path.join(ROOT, 'core', 'heat-pump-core.js');
+const MAX_BODY = '64kb';
 
 const SECURITY_HEADERS = {
-  'x-content-type-options': 'nosniff',
-  'referrer-policy': 'strict-origin-when-cross-origin',
-  'x-frame-options': 'DENY',
-  'permissions-policy': 'camera=(), microphone=(), geolocation=()',
-  'content-security-policy': [
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'X-Frame-Options': 'DENY',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  'Content-Security-Policy': [
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' https://fonts.googleapis.com",
@@ -59,33 +55,6 @@ export function readConfig(env = process.env) {
   };
 }
 
-const MAX_BODY_BYTES = 64 * 1024;
-
-function send(res, status, body, headers = {}) {
-  const isJson = typeof body !== 'string' && !Buffer.isBuffer(body);
-  res.writeHead(status, {
-    ...SECURITY_HEADERS,
-    ...(isJson ? { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } : {}),
-    ...headers,
-  });
-  res.end(isJson ? JSON.stringify(body) : body);
-}
-
-async function readJson(req) {
-  let size = 0;
-  const chunks = [];
-  for await (const chunk of req) {
-    size += chunk.length;
-    if (size > MAX_BODY_BYTES) throw Object.assign(new Error('Request too large'), { status: 413 });
-    chunks.push(chunk);
-  }
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  } catch {
-    throw Object.assign(new Error('Invalid JSON'), { status: 400 });
-  }
-}
-
 /** Validate the chat history the page sends. Returns an error string or null. */
 export function validateMessages(messages, { maxMessageChars, maxTurns }) {
   if (!Array.isArray(messages) || messages.length === 0) return 'messages must be a non-empty array';
@@ -100,130 +69,123 @@ export function validateMessages(messages, { maxMessageChars, maxTurns }) {
   return null;
 }
 
-function clientIp(req, trustProxy) {
-  if (trustProxy) {
-    // Railway's edge appends the real client address as the LAST entry; earlier entries can be spoofed.
-    const fwd = String(req.headers['x-forwarded-for'] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-    if (fwd.length) return fwd.at(-1);
-  }
-  return req.socket.remoteAddress ?? 'unknown';
+// ── Middleware ───────────────────────────────────────────────
+
+function securityHeaders(req, res, next) {
+  res.set(SECURITY_HEADERS);
+  next();
 }
 
-function corsHeaders(origin, cfg) {
-  if (!origin || !cfg.allowedOrigins.includes(origin)) return {};
-  return {
-    'access-control-allow-origin': origin,
-    'access-control-allow-methods': 'POST, OPTIONS',
-    'access-control-allow-headers': 'content-type',
-    'access-control-max-age': '600',
-    vary: 'Origin',
+/** CORS for /api/chat: the allow-listed sites, plus the service's own page. Everyone else gets 403. */
+function cors(cfg) {
+  return (req, res, next) => {
+    const origin = req.get('origin');
+    if (!origin) return next(); // same-origin GETs and server-to-server calls carry no Origin
+    if (cfg.allowedOrigins.includes(origin)) {
+      res.set({
+        'Access-Control-Allow-Origin': origin,
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'content-type',
+        'Access-Control-Max-Age': '600',
+        Vary: 'Origin',
+      });
+      return next();
+    }
+    let sameOrigin = false;
+    try { sameOrigin = new URL(origin).host === req.get('host'); } catch { /* malformed Origin */ }
+    if (sameOrigin) return next();
+    return res.status(403).json({ error: 'Origin not allowed' });
   };
 }
 
-function isSameOrigin(req, origin) {
-  try {
-    return new URL(origin).host === req.headers.host;
-  } catch {
-    return false;
-  }
+function rateLimit(limiter, keyFn, onLimited) {
+  return (req, res, next) => {
+    const { allowed, retryAfterSeconds } = limiter.take(keyFn(req));
+    if (allowed) return next();
+    return onLimited(req, res, retryAfterSeconds);
+  };
 }
 
-async function serveStatic(req, res) {
-  const url = new URL(req.url, 'http://x');
-  let pathname;
-  try {
-    pathname = decodeURIComponent(url.pathname);
-  } catch {
-    return send(res, 400, { error: 'Bad path' });
-  }
-  if (pathname === '/') pathname = '/index.html';
-  for (const { prefix, dir, only } of STATIC_ROOTS) {
-    if (!pathname.startsWith(prefix)) continue;
-    const rel = pathname.slice(prefix.length);
-    if (only && !only.includes(rel)) continue;
-    const file = path.join(dir, rel);
-    if (!file.startsWith(dir + path.sep)) return send(res, 404, 'Not found', { 'content-type': 'text/plain' });
-    try {
-      const body = await readFile(file);
-      const type = TYPES[path.extname(file)];
-      if (!type) continue;
-      return send(res, 200, body, { 'content-type': type, 'cache-control': 'no-cache' });
-    } catch {
-      // fall through to the next root
-    }
-  }
-  return send(res, 404, 'Not found', { 'content-type': 'text/plain; charset=utf-8' });
-}
+// ── App ──────────────────────────────────────────────────────
 
-export function createServer(cfg = readConfig(), { core = loadCore(), fetchImpl = fetch, now = () => Date.now(), log = console } = {}) {
+export function createApp(cfg = readConfig(), { core = loadCore(), fetchImpl = fetch, now = () => Date.now(), log = console } = {}) {
+  const app = express();
+  app.disable('x-powered-by');
+  // Railway's edge proxy appends the real client address to X-Forwarded-For; trusting one hop
+  // makes req.ip that address. Earlier entries in the header can be spoofed and are ignored.
+  app.set('trust proxy', cfg.trustProxy ? 1 : false);
+  app.use(securityHeaders);
+
+  app.get('/healthz', (req, res) => res.set('Cache-Control', 'no-store').json({ ok: true }));
+
+  // ── Chat API ──
   const perIp = createRateLimiter({ limit: cfg.ratePerHour, windowMs: 60 * 60 * 1000, now });
-  const global = createRateLimiter({ limit: cfg.globalPerDay, windowMs: 24 * 60 * 60 * 1000, now });
-
-  async function handleChat(req, res, cors) {
-    if (!cfg.apiKey) return send(res, 503, { error: 'The assistant is not configured yet.' }, cors);
-
-    const ip = clientIp(req, cfg.trustProxy);
-    const mine = perIp.take(ip);
-    if (!mine.allowed) {
-      return send(res, 429, { error: "You've sent a lot of messages. Please try again later, or use the form." }, { ...cors, 'retry-after': String(mine.retryAfterSeconds) });
-    }
-    if (!global.take('all').allowed) {
-      return send(res, 503, { error: 'The assistant is busy today. Please use the form for now.' }, cors);
-    }
-
-    let body;
-    try {
-      body = await readJson(req);
-    } catch (err) {
-      return send(res, err.status ?? 400, { error: err.message }, cors);
-    }
-    const problem = validateMessages(body?.messages, cfg);
-    if (problem) return send(res, 400, { error: problem }, cors);
-
-    try {
-      const result = await runChatTurn({
-        core,
-        messages: body.messages,
-        details: body.details,
-        apiKey: cfg.apiKey,
-        model: cfg.model,
-        maxTokens: cfg.maxTokens,
-        maxToolRounds: cfg.maxToolRounds,
-        fetchImpl,
-      });
-      return send(res, 200, result, cors);
-    } catch (err) {
-      const status = err instanceof AgentError ? err.status : 500;
-      // Log the cause for us; never send it to the visitor.
-      log.error(`[chat] ${err.message}${err.cause ? `: ${err.cause.message}` : ''}`);
-      return send(res, status, { error: 'Sorry, the assistant could not answer just now. Please try again, or use the form.' }, cors);
-    }
-  }
-
-  return http.createServer(async (req, res) => {
-    try {
-      const { pathname } = new URL(req.url, 'http://x');
-      const origin = req.headers.origin;
-      const cors = corsHeaders(origin, cfg);
-
-      if (pathname === '/healthz') return send(res, 200, { ok: true });
-
-      if (pathname === '/api/chat') {
-        if (origin && !cors['access-control-allow-origin'] && !isSameOrigin(req, origin)) {
-          return send(res, 403, { error: 'Origin not allowed' });
-        }
-        if (req.method === 'OPTIONS') return send(res, 204, '', cors);
-        if (req.method !== 'POST') return send(res, 405, { error: 'Use POST' }, { ...cors, allow: 'POST, OPTIONS' });
-        return await handleChat(req, res, cors);
+  const daily = createRateLimiter({ limit: cfg.globalPerDay, windowMs: 24 * 60 * 60 * 1000, now });
+  const api = express.Router();
+  api.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); }, cors(cfg));
+  api.options('/chat', (req, res) => res.sendStatus(204));
+  api.post(
+    '/chat',
+    (req, res, next) => (cfg.apiKey ? next() : res.status(503).json({ error: 'The assistant is not configured yet.' })),
+    rateLimit(perIp, (req) => req.ip ?? 'unknown', (req, res, retryAfter) => res
+      .set('Retry-After', String(retryAfter))
+      .status(429)
+      .json({ error: "You've sent a lot of messages. Please try again later, or use the form." })),
+    rateLimit(daily, () => 'all', (req, res) => res
+      .status(503)
+      .json({ error: 'The assistant is busy today. Please use the form for now.' })),
+    // Parse every body as JSON, whatever its content type, so oversized or malformed bodies are refused here.
+    express.json({ limit: MAX_BODY, type: () => true }),
+    async (req, res) => {
+      const problem = validateMessages(req.body?.messages, cfg);
+      if (problem) return res.status(400).json({ error: problem });
+      try {
+        const result = await runChatTurn({
+          core,
+          messages: req.body.messages,
+          details: req.body.details,
+          apiKey: cfg.apiKey,
+          model: cfg.model,
+          maxTokens: cfg.maxTokens,
+          maxToolRounds: cfg.maxToolRounds,
+          fetchImpl,
+        });
+        return res.json(result);
+      } catch (err) {
+        const status = err instanceof AgentError ? err.status : 500;
+        // Log the cause for us; never send it to the visitor.
+        log.error(`[chat] ${err.message}${err.cause ? `: ${err.cause.message}` : ''}`);
+        return res.status(status).json({ error: 'Sorry, the assistant could not answer just now. Please try again, or use the form.' });
       }
+    },
+  );
+  api.all('/chat', (req, res) => res.set('Allow', 'POST, OPTIONS').status(405).json({ error: 'Use POST' }));
+  app.use('/api', api);
 
-      if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'Method not allowed' });
-      return await serveStatic(req, res);
-    } catch (err) {
-      log.error(`[server] ${err.stack ?? err}`);
-      if (!res.headersSent) send(res, 500, { error: 'Server error' });
-    }
+  // ── Static files: only these three places are ever served ──
+  const staticOpts = { index: 'index.html', dotfiles: 'ignore', fallthrough: true, setHeaders: (res) => res.set('Cache-Control', 'no-cache') };
+  app.get('/core/heat-pump-core.js', (req, res) => res.set('Cache-Control', 'no-cache').type('js').sendFile(CORE_FILE));
+  app.use('/shared', express.static(SHARED_DIR, { ...staticOpts, index: false }));
+  app.use(express.static(PUBLIC_DIR, staticOpts));
+
+  app.use((req, res) => res.status(404).type('text').send('Not found'));
+
+  // Express 5 sends errors from body parsing and async handlers here.
+  // eslint-disable-next-line no-unused-vars
+  app.use((err, req, res, next) => {
+    const status = err.status ?? err.statusCode ?? 500;
+    if (status >= 500) log.error(`[server] ${err.stack ?? err}`);
+    const message = status === 413 ? 'Request too large' : status === 400 ? 'Invalid JSON' : 'Server error';
+    if (res.headersSent) return;
+    res.status(status).json({ error: message });
   });
+
+  return app;
+}
+
+/** An http.Server wrapping the app (what tests and `npm start` use). */
+export function createServer(cfg = readConfig(), opts = {}) {
+  return http.createServer(createApp(cfg, opts));
 }
 
 // Start when run directly (npm start), not when imported by tests.
