@@ -44,6 +44,14 @@ npm run dev                 # http://localhost:3000
 npm test
 ```
 
+### In a GitHub Codespace
+
+Code → Codespaces → Create codespace. The server starts on its own and port 3000 opens in
+the browser. Codespaces asks for `ANTHROPIC_API_KEY` as a secret the first time (or add it
+under GitHub Settings → Codespaces → Secrets); you can also put it in `.env`. The Codespace's
+own address is allowed automatically. Keep the port's visibility Private, or anyone with the
+link can spend credit on your key.
+
 ## Deploy on Railway
 
 1. **New service** in the Fidesq project → *Deploy from GitHub repo* → this repo.

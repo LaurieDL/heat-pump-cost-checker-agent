@@ -78,6 +78,11 @@ test('the API key never reaches the browser', async () => {
   });
 });
 
+test('a Codespace allows its own forwarded address', () => {
+  const cfg = readConfig({ CODESPACE_NAME: 'orange-x', GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN: 'app.github.dev', ALLOWED_ORIGINS: 'https://fidesq.com/' });
+  assert.deepEqual(cfg.allowedOrigins, ['https://fidesq.com', 'https://orange-x-3000.app.github.dev']);
+});
+
 test('validation', () => {
   const cfg = { maxMessageChars: 10, maxTurns: 3 };
   assert.equal(validateMessages([{ role: 'user', content: 'hi' }], cfg), null);

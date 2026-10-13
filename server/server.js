@@ -38,11 +38,17 @@ const SECURITY_HEADERS = {
 
 export function readConfig(env = process.env) {
   const int = (v, d) => (Number.isFinite(Number.parseInt(v, 10)) ? Number.parseInt(v, 10) : d);
+  const port = int(env.PORT, 3000);
+  const allowedOrigins = (env.ALLOWED_ORIGINS ?? '').split(',').map((s) => s.trim().replace(/\/$/, '')).filter(Boolean);
+  // In a GitHub Codespace, allow the forwarded address of this port automatically.
+  if (env.CODESPACE_NAME && env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN) {
+    allowedOrigins.push(`https://${env.CODESPACE_NAME}-${port}.${env.GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN}`);
+  }
   return {
-    port: int(env.PORT, 3000),
+    port,
     apiKey: env.ANTHROPIC_API_KEY ?? '',
     model: env.ANTHROPIC_MODEL || 'claude-sonnet-5-5',
-    allowedOrigins: (env.ALLOWED_ORIGINS ?? '').split(',').map((s) => s.trim()).filter(Boolean),
+    allowedOrigins,
     trustProxy: env.TRUST_PROXY !== 'false',
     ratePerHour: int(env.RATE_LIMIT_PER_HOUR, 40),
     globalPerDay: int(env.GLOBAL_LIMIT_PER_DAY, 3000),
@@ -226,5 +232,6 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   if (!cfg.apiKey) console.warn('ANTHROPIC_API_KEY is not set: the page will load but the chat will be off.');
   createServer(cfg).listen(cfg.port, () => {
     console.log(`Heat pump agent listening on :${cfg.port} (model ${cfg.model})`);
+    if (cfg.allowedOrigins.length) console.log(`Other sites allowed to call /api/chat: ${cfg.allowedOrigins.join(', ')}`);
   });
 }
