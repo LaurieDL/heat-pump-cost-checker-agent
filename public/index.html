@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- page:head:start -->
+<title>Heat Pump Cost Checker</title>
+<meta name="description" content="Describe your home in plain English and see what an air source heat pump would cost after the grant, and what it would cost to run.">
+<meta name="theme-color" content="#0B1220">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@500;600;700&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
+<!-- page:head:end -->
+<!-- Where the page sends chat messages. Empty = this service. Set it when the page lives on fidesq.com. -->
+<meta name="hp-api-base" content="">
+<link rel="stylesheet" href="/styles.css">
+<script src="/core/heat-pump-core.js" defer></script>
+<script type="module" src="/app.js"></script>
+</head>
+<body>
+<!-- page:body:start -->
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="https://fidesq.com/" aria-label="Fidesq home">
+      <span class="brand-mark" aria-hidden="true">f</span>
+      <span class="brand-word">fidesq<span>.</span></span>
+    </a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="https://fidesq.com/ai-apps.html">Services</a>
+      <a href="https://fidesq.com/apps.html" aria-current="page">Projects</a>
+      <a href="https://fidesq.com/profiles.html">About Us</a>
+    </nav>
+    <a class="btn-dark" href="https://fidesq.com/contact.html">Get in Touch</a>
+  </div>
+</header>
+<div class="crumbs"><div class="wrap"><a href="https://fidesq.com/apps.html">Projects</a>&nbsp;&nbsp;/&nbsp;&nbsp;<span>Heat pump cost calculator</span></div></div>
+
+<div class="hero-outer">
+  <section class="hero">
+    <div class="hero-inner">
+      <span class="tag-pill"><span class="dot"></span>Free tool for UK homes</span>
+      <h1><span class="l1">Heat pump cost calculator:</span><span class="l2">what it costs your home after the grant</span></h1>
+      <p>Tell our assistant about your home in your own words and it works out what an air source heat pump would cost you, before and after the grant, and what it would cost to run against your gas, oil, LPG or electric heating. No sign-up, and every figure shows its source and the date we checked it.</p>
+      <div class="hero-actions">
+        <a class="btn-primary" href="#calculator">Work out my cost</a>
+        <a class="btn-ghost-dark" href="https://fidesq.com/heat-pump-cost-calculator.html#grant">About the grant
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></a>
+      </div>
+    </div>
+  </section>
+</div>
+
+<main id="calculator" class="calc">
+  <div class="wrap">
+    <section class="chat-col" aria-labelledby="chat-title">
+      <div class="card chat">
+        <div class="chat-head">
+          <span class="brand-mark" aria-hidden="true">f</span>
+          <div class="chat-head-text">
+            <p class="chat-title" id="chat-title">Heat pump assistant</p>
+            <p class="chat-sub">DESNZ · Ofgem price cap · GOV.UK grant rules</p>
+          </div>
+          <button class="btn-quiet" id="hp-reset" type="button">Start again</button>
+        </div>
+        <div class="log" id="hp-log" role="log" aria-live="polite" aria-relevant="additions"></div>
+        <form class="composer" id="hp-compose">
+          <div class="chips" id="hp-chips"></div>
+          <div class="compose-row">
+            <label class="sr-only" for="hp-input">Describe your home or ask a question</label>
+            <textarea id="hp-input" rows="1" maxlength="1200" placeholder="e.g. 3-bed semi in York, gas combi, about £1,100 a year"></textarea>
+            <button class="send" id="hp-send" type="submit" aria-label="Send">
+              <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+            </button>
+          </div>
+          <p class="fineprint" id="hp-privacy">Estimates, not quotes. Prices checked 5 October 2026. Your messages are sent to Claude, Anthropic's AI, to work out answers, so please don't include your name, full address or contact details.</p>
+        </form>
+      </div>
+    </section>
+
+    <aside class="side-col" aria-label="Your home and your estimate">
+      <form class="card card-pad home-form" id="hp-form" novalidate>
+        <div class="home-form-head">
+          <h2>Your home</h2>
+          <span class="count" id="hp-count">0 of 5</span>
+        </div>
+        <div class="fields">
+          <div class="field" data-field="place">
+            <label for="hp-place">Town or postcode area</label>
+            <input id="hp-place" name="place" type="text" autocomplete="off" maxlength="50" placeholder="e.g. LE2 or York">
+          </div>
+          <div class="field" data-field="nation">
+            <label for="hp-nation">Nation</label>
+            <select id="hp-nation" name="nation"></select>
+          </div>
+          <div class="field" data-field="propertyType">
+            <label for="hp-type">Property type</label>
+            <select id="hp-type" name="propertyType"></select>
+          </div>
+          <div class="field" data-field="bedrooms">
+            <label for="hp-beds">Bedrooms</label>
+            <select id="hp-beds" name="bedrooms"></select>
+          </div>
+          <div class="field" data-field="currentHeating">
+            <label for="hp-fuel">Current heating</label>
+            <select id="hp-fuel" name="currentHeating"></select>
+          </div>
+          <div class="field" data-field="hasMainsGas" id="hp-mains-field" hidden>
+            <label for="hp-mains">Mains gas connection?</label>
+            <select id="hp-mains" name="hasMainsGas">
+              <option value="">Not sure</option>
+              <option value="no">No mains gas</option>
+              <option value="yes">Yes, mains gas</option>
+            </select>
+          </div>
+          <div class="field" data-field="ownership">
+            <label for="hp-own">Do you own it?</label>
+            <select id="hp-own" name="ownership"></select>
+          </div>
+          <div class="field" data-field="annualHeatingCostGbp">
+            <label for="hp-bill">Yearly spend (optional)</label>
+            <div class="money"><span aria-hidden="true">£</span><input id="hp-bill" name="annualHeatingCostGbp" type="text" inputmode="numeric" autocomplete="off" placeholder="e.g. 1100"></div>
+          </div>
+        </div>
+        <button class="btn-primary" id="hp-run" type="submit">Show my estimate</button>
+      </form>
+
+      <div class="card card-pad empty" id="hp-empty">
+        <h2>Your estimate appears here</h2>
+        <p>Installed cost before and after the grant, running costs against your current heating, whether you're likely to qualify, and what could change the figures.</p>
+      </div>
+      <div class="result" id="hp-result" hidden></div>
+    </aside>
+  </div>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <span>Built by Fidesq. Estimates, not quotes. No installer pays to appear here.</span>
+    <a href="https://fidesq.com/heat-pump-cost-calculator.html">Read the full heat pump cost guide</a>
+  </div>
+</footer>
+<!-- page:body:end -->
+</body>
+</html>
