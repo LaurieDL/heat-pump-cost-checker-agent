@@ -1,0 +1,32 @@
+{
+  "name": "Heat pump cost checker agent",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": {
+      "label": "Heat pump agent",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "secrets": {
+    "ANTHROPIC_API_KEY": {
+      "description": "An Anthropic API key for local testing. Set it as a Codespaces secret so it never sits in a file.",
+      "documentationUrl": "https://console.anthropic.com/settings/keys"
+    }
+  },
+  "postCreateCommand": "npm ci",
+  "postAttachCommand": {
+    "server": "npm run dev"
+  },
+  "customizations": {
+    "codespaces": {
+      "openFiles": ["README.md"]
+    },
+    "vscode": {
+      "settings": {
+        "workbench.colorTheme": "Default Dark Modern",
+        "window.autoDetectColorScheme": false
+      }
+    }
+  }
+}

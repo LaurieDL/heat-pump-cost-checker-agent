@@ -78,6 +78,11 @@ test('the API key never reaches the browser', async () => {
   });
 });
 
+test('a Codespace allows its own forwarded address', () => {
+  const cfg = readConfig({ CODESPACE_NAME: 'orange-x', GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN: 'app.github.dev', ALLOWED_ORIGINS: 'https://fidesq.com/' });
+  assert.deepEqual(cfg.allowedOrigins, ['https://fidesq.com', 'https://orange-x-3000.app.github.dev']);
+});
+
 test('validation', () => {
   const cfg = { maxMessageChars: 10, maxTurns: 3 };
   assert.equal(validateMessages([{ role: 'user', content: 'hi' }], cfg), null);
@@ -127,6 +132,16 @@ test('rate limit per visitor', async () => {
   });
 });
 
+test('behind a proxy, the limit follows the address the proxy saw, not a spoofed one', async () => {
+  const api = fakeAnthropic();
+  await withServer({ RATE_LIMIT_PER_HOUR: '1', TRUST_PROXY: 'true' }, { fetchImpl: api.fetchImpl }, async (base) => {
+    // The proxy appends the real address last; a visitor can only add entries before it.
+    assert.equal((await chat(base, HELLO, { 'x-forwarded-for': '1.1.1.1, 203.0.113.7' })).status, 200);
+    assert.equal((await chat(base, HELLO, { 'x-forwarded-for': '9.9.9.9, 203.0.113.7' })).status, 429, 'spoofing the first entry must not reset the limit');
+    assert.equal((await chat(base, HELLO, { 'x-forwarded-for': '203.0.113.8' })).status, 200, 'a different visitor has their own limit');
+  });
+});
+
 test('Anthropic errors become a friendly message, details stay server-side', async () => {
   const fetchImpl = async () => new Response('{"error":{"message":"secret internal detail"}}', { status: 500 });
   await withServer({}, { fetchImpl }, async (base) => {
@@ -157,5 +172,8 @@ test('static files and security headers', async () => {
     assert.equal((await fetch(base + '/%2e%2e/package.json')).status, 404);
     assert.equal((await fetch(base + '/../server/server.js')).status, 404);
     assert.equal((await fetch(base + '/healthz')).status, 200);
+    assert.equal((await fetch(base + '/package.json')).status, 404, 'project files are never served');
+    assert.equal((await fetch(base + '/.env')).status, 404);
+    assert.equal((await fetch(base + '/')).headers.get('x-powered-by'), null);
   });
 });

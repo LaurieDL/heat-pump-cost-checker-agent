@@ -30,24 +30,33 @@ estimate cards           ◀── reply, details ─  tools (shared/agent-tools
 | `shared/agent-tools.js` | The three tools (`update_home_details`, `estimate_heat_pump`, `compare_scenario`) and input checking. Runs in the browser and in Node. |
 | `shared/prompt.js` | The assistant's instructions and background facts. |
 | `shared/place.js` | Postcode area → nation, ported from the site. Only the first half of a postcode is kept. |
-| `server/` | Zero-dependency Node server: static files, `/api/chat`, rate limits, CORS, security headers. |
+| `server/` | Express server: static files, `/api/chat`, rate limits, CORS, security headers. Express is the only dependency. |
 | `public/` | The page. `transport.js` is the only part that knows where the agent runs. |
 | `prototype/`, `scripts/build-prototype.mjs` | Builds a one-file version that runs inside claude.ai for demos. |
 
 ## Run it locally
 
-Needs Node 20 or later. No `npm install` needed: there are no dependencies.
+Needs Node 20 or later.
 
 ```bash
+npm ci                      # installs Express, the only dependency
 cp .env.example .env        # then add ANTHROPIC_API_KEY
 npm run dev                 # http://localhost:3000
 npm test
 ```
 
+### In a GitHub Codespace
+
+Code → Codespaces → Create codespace. The server starts on its own and port 3000 opens in
+the browser. Codespaces asks for `ANTHROPIC_API_KEY` as a secret the first time (or add it
+under GitHub Settings → Codespaces → Secrets); you can also put it in `.env`. The Codespace's
+own address is allowed automatically. Keep the port's visibility Private, or anyone with the
+link can spend credit on your key.
+
 ## Deploy on Railway
 
 1. **New service** in the Fidesq project → *Deploy from GitHub repo* → this repo.
-   Railway detects Node and runs `npm start`. No build step.
+   Railway detects Node, installs from `package-lock.json` and runs `npm start`. No build step.
 2. **Variables**:
    - `ANTHROPIC_API_KEY`: a key from Fidesq's Anthropic account, made just for this service.
      Set a monthly spend limit on its workspace in the Anthropic Console.

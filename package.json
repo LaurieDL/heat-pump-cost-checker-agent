@@ -12,5 +12,8 @@
     "dev": "node --env-file-if-exists=.env --watch server/server.js",
     "test": "node --test",
     "build:prototype": "node scripts/build-prototype.mjs"
+  },
+  "dependencies": {
+    "express": "5.2.1"
   }
 }
