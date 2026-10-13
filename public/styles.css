@@ -129,6 +129,7 @@ h1, h2, h3 { text-wrap: balance; }
 .msg-agent { display: flex; gap: 10px; align-items: flex-start; }
 .msg-agent .avatar { flex-shrink: 0; width: 28px; height: 28px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font: italic 400 20px/1 var(--font-serif); }
 .msg-agent .bubble { background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px 18px 18px 18px; padding: 11px 15px; min-width: 0; }
+.msg-agent .bubble.is-question { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-ink); font-weight: 500; }
 .msg-user { align-self: flex-end; background: var(--night); color: #fff; border-radius: 18px 4px 18px 18px; padding: 11px 15px; white-space: pre-wrap; }
 .msg-note { align-self: center; max-width: 100%; text-align: center; font-size: 13.5px; color: var(--bad); background: var(--bad-soft); border-radius: 12px; padding: 8px 14px; }
 .checks { margin: 4px 0 0 38px; border: 1px dashed var(--accent-line); background: #fafaff; border-radius: 14px; padding: 10px 14px; display: flex; flex-direction: column; gap: 5px; max-width: calc(92% - 38px); }
@@ -170,6 +171,12 @@ h1, h2, h3 { text-wrap: balance; }
 .field .money input { padding-left: 26px; }
 .field .hint { margin: 0; font-size: 12px; line-height: 1.4; color: var(--muted); }
 .field.just-set input, .field.just-set select { animation: flash 1.6s ease-out; }
+/* Details the assistant still needs: marked so the visitor can see the gaps. */
+.field[data-gap] label::after { margin-left: 6px; font: 500 11px/1 var(--font-mono); }
+.field[data-gap="needed"] label::after { content: 'needed'; color: var(--accent); }
+.field[data-gap="optional"] label::after { content: 'optional'; color: var(--muted); }
+.field[data-gap="needed"] input, .field[data-gap="needed"] select { border-style: dashed; border-color: var(--accent); background-color: #fbfbff; }
+.field[data-gap="optional"] input, .field[data-gap="optional"] select { border-style: dashed; }
 @keyframes flash { 0% { background-color: var(--accent-soft); border-color: var(--accent); } 100% { background-color: var(--surface); } }
 @media (max-width: 420px) { .fields { grid-template-columns: minmax(0, 1fr); } }
 

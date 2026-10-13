@@ -104,6 +104,99 @@ export function missingFields(details) {
   return REQUIRED_FOR_ESTIMATE.filter((f) => details[f] === undefined);
 }
 
+// ── Gaps: what the assistant still has to ask, in the order to ask it ──
+//
+// `maxAsks` stops the assistant nagging: required details are asked until
+// answered; the rest at most this many times (a visitor who says "not sure"
+// is not asked again).
+export const QUESTIONS = {
+  place: {
+    label: 'Where the home is', required: true, maxAsks: Infinity,
+    hint: 'Ask where the home is: a town, or the first half of the postcode. This sets which grant applies.',
+    fallback: 'Where is the home? A town or the first half of the postcode is enough.',
+    replies: [],
+  },
+  propertyType: {
+    label: 'Property type', required: true, maxAsks: Infinity,
+    hint: 'Ask what kind of home it is.',
+    fallback: 'What kind of home is it?',
+    replies: FIELD_OPTIONS.propertyType.map(([, l]) => l),
+  },
+  bedrooms: {
+    label: 'Bedrooms', required: true, maxAsks: Infinity,
+    hint: 'Ask how many bedrooms it has. Size sets the heat pump size and so the price.',
+    fallback: 'How many bedrooms does it have?',
+    replies: ['1 bedroom', '2 bedrooms', '3 bedrooms', '4 bedrooms', '5 or more bedrooms'],
+  },
+  currentHeating: {
+    label: 'Current heating', required: true, maxAsks: Infinity,
+    hint: 'Ask how the home is heated now.',
+    fallback: 'How is the home heated now?',
+    replies: FIELD_OPTIONS.currentHeating.map(([, l]) => l),
+  },
+  ownership: {
+    label: 'Ownership', required: false, maxAsks: 2,
+    hint: 'Ask whether they own the home. It decides whether they can get the grant.',
+    fallback: 'Do you own the home? That decides whether you can get the grant.',
+    replies: FIELD_OPTIONS.ownership.map(([, l]) => l),
+  },
+  hasMainsGas: {
+    label: 'Mains gas connection', required: false, maxAsks: 1,
+    hint: 'Ask whether the home is connected to mains gas. Oil and LPG homes without it get the bigger £9,000 grant.',
+    fallback: 'Is the home connected to mains gas? Oil and LPG homes without it can get £9,000 instead of £7,500.',
+    replies: ['No mains gas', "Yes, there's mains gas", 'Not sure'],
+  },
+  annualHeatingCostGbp: {
+    label: 'Yearly heating spend', required: false, maxAsks: 1,
+    hint: 'Ask roughly what they spend a year on heating and hot water, so running costs are based on their home. Say it is optional.',
+    fallback: 'Roughly what do you spend a year on heating and hot water? It makes the running costs fit your home. Skip it if you are not sure.',
+    replies: ["Not sure, skip this"],
+  },
+};
+const QUESTION_FIELDS = Object.keys(QUESTIONS);
+
+/** Sanitise the page's record of how often each detail has been asked. */
+export function sanitizeAsked(raw) {
+  const asked = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return asked;
+  for (const f of QUESTION_FIELDS) {
+    const n = Math.floor(Number(raw[f]));
+    if (Number.isFinite(n) && n > 0) asked[f] = Math.min(n, 20);
+  }
+  return asked;
+}
+
+function isGap(field, details) {
+  switch (field) {
+    case 'place': return details.nation === undefined; // a known nation is enough for the estimate
+    case 'hasMainsGas': return (details.currentHeating === 'oil' || details.currentHeating === 'lpg') && details.hasMainsGas === undefined;
+    default: return details[field] === undefined;
+  }
+}
+
+/**
+ * The details still missing, most important first, leaving out any already
+ * asked as often as allowed. Each entry: { field, label, required, hint, replies }.
+ */
+export function findGaps(details, asked = {}) {
+  return QUESTION_FIELDS
+    .filter((f) => isGap(f, details) && (asked[f] ?? 0) < QUESTIONS[f].maxAsks)
+    .map((f) => ({ field: f, label: QUESTIONS[f].label, required: QUESTIONS[f].required, hint: QUESTIONS[f].hint, replies: QUESTIONS[f].replies }));
+}
+
+/**
+ * Safety net: if the assistant still hasn't asked about a gap, ask the first
+ * one with a fixed question. Returns the question (and counts it as asked), or null.
+ */
+export function fallbackQuestion(details, asked) {
+  const gap = findGaps(details, asked)[0];
+  if (!gap) return null;
+  asked[gap.field] = (asked[gap.field] ?? 0) + 1;
+  return { field: gap.field, question: QUESTIONS[gap.field].fallback, replies: gap.replies };
+}
+
+const gapsForModel = (gaps) => gaps.map(({ field, required, hint }) => ({ field, required, hint }));
+
 /** The full estimate the page renders, or null while required details are missing. */
 export function runEstimate(core, details, today = new Date()) {
   if (missingFields(details).length) return null;
@@ -167,9 +260,16 @@ const DETAIL_PROPERTIES = {
  * @param {() => object} o.getDetails  current details
  * @param {(d: object) => void} o.setDetails
  * @param {(c: {label: string, source?: string}) => void} [o.onCheck]  progress line for the page
+ * @param {() => object} [o.getAsked]  how often each detail has been asked so far
+ * @param {(a: object) => void} [o.setAsked]
+ * @param {(q: {field: string, question: string, replies: string[]}) => void} [o.onQuestion]
+ *        called when the assistant asks the visitor something; the turn should end there
  * @param {Date} [o.today]
  */
-export function createAgentTools({ core, getDetails, setDetails, onCheck = () => {}, today = new Date() }) {
+export function createAgentTools({
+  core, getDetails, setDetails, onCheck = () => {},
+  getAsked = () => ({}), setAsked = () => {}, onQuestion = () => {}, today = new Date(),
+}) {
   const describe = (d) => {
     const parts = [];
     if (d.bedrooms) parts.push(`${d.bedrooms === 5 ? '5+' : d.bedrooms}-bed`);
@@ -183,13 +283,13 @@ export function createAgentTools({ core, getDetails, setDetails, onCheck = () =>
     {
       name: 'update_home_details',
       description:
-        "Record details the visitor has told you about their home. Call it whenever they give any detail, passing only the fields you learned. Returns the full saved details, which required fields are still missing, and any values that were rejected.",
+        "Record details the visitor has told you about their home. Call it whenever they give any detail, passing only the fields you learned. Returns the full saved details, any values that were rejected, and stillToAsk: the details still missing, most important first.",
       inputSchema: { type: 'object', properties: DETAIL_PROPERTIES },
       execute(input) {
         const { details, rejected } = sanitizeDetails(input, getDetails());
         setDetails(details);
         onCheck({ label: `Noted: ${describe(details) || 'your details'}` });
-        return { details, missingForEstimate: missingFields(details), rejected };
+        return { details, rejected, readyToEstimate: missingFields(details).length === 0, stillToAsk: gapsForModel(findGaps(details, getAsked())) };
       },
     },
     {
@@ -205,7 +305,7 @@ export function createAgentTools({ core, getDetails, setDetails, onCheck = () =>
         onCheck({ label: `Priced a typical ${d.size.band} install`, source: 'DESNZ Boiler Upgrade Scheme statistics' });
         onCheck({ label: `Grant: ${d.grant.scheme}, ${d.grant.status}`, source: 'GOV.UK' });
         onCheck({ label: `Running costs (${d.running.basis})`, source: 'Ofgem price cap, Oct–Dec 2026' });
-        return summarizeEstimate(d);
+        return { ...summarizeEstimate(d), stillToAsk: gapsForModel(findGaps(details, getAsked())) };
       },
     },
     {
@@ -219,6 +319,31 @@ export function createAgentTools({ core, getDetails, setDetails, onCheck = () =>
         if (missing.length) throw new Error(`Still need: ${missing.join(', ')}.`);
         onCheck({ label: 'Compared a what-if scenario' });
         return { scenario: details, rejected, estimate: summarizeEstimate(core.estimate(details, today)) };
+      },
+    },
+    {
+      name: 'ask_visitor',
+      description:
+        "Ask the visitor for ONE missing detail from stillToAsk. The question is shown in the chat with tap-to-answer options, and your turn ends there, so call it last, after any other tools. Ask the first item in stillToAsk unless the conversation makes another more natural. Don't also write the question in your reply.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          field: { type: 'string', enum: QUESTION_FIELDS, description: 'Which detail you are asking for.' },
+          question: { type: 'string', description: 'One short, friendly question in plain UK English, e.g. "How many bedrooms does it have?"' },
+        },
+        required: ['field', 'question'],
+      },
+      execute(input) {
+        const field = String(input.field ?? '');
+        const question = String(input.question ?? '').trim().slice(0, 300);
+        if (!QUESTIONS[field]) throw new Error(`Unknown field. Ask one of: ${QUESTION_FIELDS.join(', ')}`);
+        if (!question) throw new Error('Write the question to show the visitor.');
+        if (!isGap(field, getDetails())) throw new Error(`${field} is already known. Pick another from stillToAsk, or don't ask.`);
+        const asked = { ...getAsked() };
+        asked[field] = (asked[field] ?? 0) + 1;
+        setAsked(asked);
+        onQuestion({ field, question, replies: QUESTIONS[field].replies });
+        return { shown: true, note: 'The visitor sees your question now. End your turn without writing anything else.' };
       },
     },
   ];
