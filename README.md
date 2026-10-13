@@ -98,3 +98,9 @@ so "it never leaves your browser" is only true of the form.
 When fidesq.com's core changes (for example a new Ofgem price cap), copy the new
 `/assets/js/heat-pump-core.js` over `core/heat-pump-core.js` and run `npm test`. The tests
 check the core still matches the figures quoted on the site, so update them if those change.
+
+## Improving the assistant
+
+`docs/quality-phases.md` is a five-phase plan (evals, figure checks, better extraction, smarter
+questions, reliability and feedback). Each phase is one pull request and can be built by telling
+Claude: "Read `docs/quality-phases.md`, then build Phase 1."
