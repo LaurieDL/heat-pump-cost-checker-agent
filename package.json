@@ -1,0 +1,16 @@
+{
+  "name": "heat-pump-cost-checker-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agentic heat pump cost checker for fidesq.com: a chat assistant that turns plain-English descriptions into heat pump estimates using the site's calculation core.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node --env-file-if-exists=.env --watch server/server.js",
+    "test": "node --test",
+    "build:prototype": "node scripts/build-prototype.mjs"
+  }
+}
