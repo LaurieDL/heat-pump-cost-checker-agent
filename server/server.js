@@ -7,12 +7,14 @@ import express from 'express';
 import { loadCore } from '../core/load-core.js';
 import { runChatTurn, AgentError } from './agent.js';
 import { createRateLimiter } from './rate-limit.js';
+import { compress } from './compress.js';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const SHARED_DIR = path.join(ROOT, 'shared');
 const CORE_FILE = path.join(ROOT, 'core', 'heat-pump-core.js');
 const MAX_BODY = '64kb';
+const ASSET_CACHE = 'public, max-age=300';
 
 const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
@@ -164,8 +166,14 @@ export function createApp(cfg = readConfig(), { core = loadCore(), fetchImpl = f
   app.use('/api', api);
 
   // ── Static files: only these three places are ever served ──
-  const staticOpts = { index: 'index.html', dotfiles: 'ignore', fallthrough: true, setHeaders: (res) => res.set('Cache-Control', 'no-cache') };
-  app.get('/core/heat-pump-core.js', (req, res) => res.set('Cache-Control', 'no-cache').type('js').sendFile(CORE_FILE));
+  // The page itself is always re-checked (no-cache, answered with a cheap 304 when unchanged) so a
+  // deploy shows up at once. Scripts, styles and the core may be reused for a few minutes without
+  // asking again, which makes repeat visits instant. Keep it short: the page's scripts load each
+  // other, so a long lifetime could mix old and new files after a deploy.
+  const cacheControl = (res, filePath) => res.set('Cache-Control', /\.html$/.test(filePath) ? 'no-cache' : ASSET_CACHE);
+  const staticOpts = { index: 'index.html', dotfiles: 'ignore', fallthrough: true, setHeaders: cacheControl };
+  app.use(compress());
+  app.get('/core/heat-pump-core.js', (req, res) => res.set('Cache-Control', ASSET_CACHE).type('js').sendFile(CORE_FILE));
   app.use('/shared', express.static(SHARED_DIR, { ...staticOpts, index: false }));
   app.use(express.static(PUBLIC_DIR, staticOpts));
 

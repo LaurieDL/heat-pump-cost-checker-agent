@@ -30,7 +30,7 @@ estimate cards           ◀── reply, details ─  tools (shared/agent-tools
 | `shared/agent-tools.js` | The three tools (`update_home_details`, `estimate_heat_pump`, `compare_scenario`) and input checking. Runs in the browser and in Node. |
 | `shared/prompt.js` | The assistant's instructions and background facts. |
 | `shared/place.js` | Postcode area → nation, ported from the site. Only the first half of a postcode is kept. |
-| `server/` | Express server: static files, `/api/chat`, rate limits, CORS, security headers. Express is the only dependency. |
+| `server/` | Express server: static files, `/api/chat`, rate limits, CORS, security headers. Express is the only dependency. Static files are compressed (brotli/gzip, built-in `zlib`) and cached for 5 minutes; the page itself is always re-checked. |
 | `public/` | The page. `transport.js` is the only part that knows where the agent runs. |
 | `prototype/`, `scripts/build-prototype.mjs` | Builds a one-file version that runs inside claude.ai for demos. |
 
