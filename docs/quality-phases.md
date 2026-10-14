@@ -395,6 +395,32 @@ cost), and `annualHeatingCostGbp` (changes running costs only). That is what thi
 New inputs (EPC rating, insulation, floor area) need a change to the site's core and are not
 part of this phase.
 
+### 4.0 Laurie's question rules (added 14 October 2026)
+
+These decide what this phase builds. Where they differ from anything below, these win.
+
+**At least five questions, in this wording and order.** Skip any the visitor has already answered, and say how many are left ("I'll ask five quick questions, then show your figures" or "Just two more"). The visitor can skip any question; a skipped answer is assumed and labelled on the result.
+1. "Where is the home located?" (a town or the first half of the postcode)
+2. "How is it heated now?" (gas, oil, LPG or electric)
+3. "Type of home and how many bedrooms?"
+4. "Roughly what's your yearly heating bill?" Offer three buttons, **Low**, **Normal** and **High**, each showing a £ range for this visitor's fuel and home, plus "Not sure" and a box for an exact figure.
+5. "Do you own the home or rent it?"
+
+**The bill bands.** Normal is the core's typical yearly cost for the visitor's current fuel and home (`running.currentAnnual` before a bill is given). Low and High scale the fuel part of it by Ofgem's low and high typical consumption against its medium figure (from 1 July 2026: 6,000 and 14,000 kWh a year against 9,500, so about 0.63× and 1.47×). This is already built in the plugin's core as `billBands()` (with `QUESTIONS`, `stillMatters()`, `ENOUGH_DATA` and `estimateQuality()`), so the agent gets it by copying the new core over; don't rebuild it here. Show each band as a range rounded to the nearest £50, and pass the band's midpoint to the core as `annualHeatingCostGbp`. All figures come from the core; the model never states a band it didn't receive from a tool.
+
+**More questions when the estimate isn't realistic yet.** After the five, run `whatWouldNarrow` (4.1) on every detail still unknown, including `hasMainsGas` for oil and LPG homes and `isNewBuild`. Ask one more question at a time, biggest impact first, while any unknown would:
+- flip the grant answer (for example likely to unavailable), or
+- move the cost after the grant by more than £1,000 at the midpoint, or
+- move the yearly running cost by more than £100.
+
+Stop when none would, or when the visitor says to stop. The thresholds are starting values: keep them in one named constant and tune them against the eval.
+
+**Below the minimum, no figures.** Until the first three questions are answered, the estimate tool returns no figures, unless the visitor asks for a quick idea; then it gives a rough range and says what it assumed.
+
+**A quality label on the result.** "Rough" when any of the first three answers was assumed, "Good" when they're known, "Personal" when the bill and ownership are known too. Computed from the details, not chosen by the model.
+
+The same rules apply to the ChatGPT plugin (repo `LaurieDL/heat-pump-cost-checker`, branch `v2-conversational`). Keep the question wording and the bands in one shared place so every version says the same thing.
+
 ### 4.1 `shared/sensitivity.js` (pure, browser-safe)
 - `whatWouldNarrow(core, details, today)` returns `[]` if any required detail is missing. Otherwise, for each optional field that is unknown (ignore `maxAsks` here):
   - `ownership`: run the estimate for `owner_occupier` and for `tenant`. Outcomes: "If you own it" and "If you rent it".
