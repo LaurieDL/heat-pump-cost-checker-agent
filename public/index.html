@@ -19,6 +19,12 @@
 <link rel="stylesheet" href="/styles.css">
 <script src="/core/heat-pump-core.js" defer></script>
 <script type="module" src="/app.js"></script>
+<!-- Start fetching the rest of app.js's imports now, in parallel, instead of one level at a time.
+     Keep in step with the import lines (test/server.test.js checks this). -->
+<link rel="modulepreload" href="/shared/agent-tools.js">
+<link rel="modulepreload" href="/shared/place.js">
+<link rel="modulepreload" href="/render.js">
+<link rel="modulepreload" href="/transport.js">
 </head>
 <body>
 <!-- page:body:start -->

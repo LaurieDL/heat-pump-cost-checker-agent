@@ -3,9 +3,13 @@
 //
 // The loop keeps going until the assistant has either asked the visitor for
 // the next missing detail (ask_visitor ends the turn) or there is nothing left
-// to ask. If it stops with details still missing, it is nudged once and made to
-// call ask_visitor; if even that fails, a fixed question is used, so a gap is
-// never left unasked.
+// to ask. If it stops with details still missing, it is nudged once with a
+// message telling it to call ask_visitor; if even that fails, a fixed question
+// is used, so a gap is never left unasked.
+//
+// Never force a tool with tool_choice { type: 'tool' } or { type: 'any' }:
+// Sonnet 5.5, Opus 5.5 and Fable 5.1 reject both with a 400, which fails the
+// whole turn. tool_choice { type: 'none' } is still allowed.
 import { createAgentTools, sanitizeDetails, sanitizeAsked, findGaps, fallbackQuestion } from '../shared/agent-tools.js';
 import { buildSystemPrompt, buildGapNudge } from '../shared/prompt.js';
 
@@ -83,19 +87,18 @@ export async function runChatTurn({
   const system = buildSystemPrompt({ details, asked, today });
   let answer = ''; // the reply to what the visitor said
   let askText = ''; // any words the assistant wrote alongside its question
-  let forceQuestion = false;
+  let nudgeRound = false;
   let nudged = false;
 
   for (let round = 0; round <= maxToolRounds; round++) {
     const lastRound = round === maxToolRounds;
-    const toolChoice = forceQuestion
-      ? { tool_choice: { type: 'tool', name: 'ask_visitor' } }
-      : lastRound ? { tool_choice: { type: 'none' } } : {}; // last round: answer, no more tools
+    // Last round: answer, no more tools. Unless it is the nudge round, which must still be able to ask.
+    const toolChoice = lastRound && !nudgeRound ? { tool_choice: { type: 'none' } } : {};
     const response = await callClaude({
       apiKey, fetchImpl, timeoutMs,
       body: { model, max_tokens: maxTokens, system, tools: apiTools, ...toolChoice, messages: convo },
     });
-    forceQuestion = false;
+    nudgeRound = false;
 
     const content = Array.isArray(response.content) ? response.content : [];
     const roundText = content.filter((b) => b.type === 'text').map((b) => b.text.trim()).filter(Boolean).join('\n\n');
@@ -103,11 +106,11 @@ export async function runChatTurn({
 
     if (response.stop_reason !== 'tool_use' || toolUses.length === 0) {
       if (roundText) answer = roundText;
-      // Ended the turn with details still to ask and no question: nudge once, forcing ask_visitor.
+      // Ended the turn with details still to ask and no question: nudge once, asking for ask_visitor.
       const gaps = findGaps(details, asked);
       if (gaps.length && !nudged && round < maxToolRounds) {
         nudged = true;
-        forceQuestion = true;
+        nudgeRound = true;
         convo.push(
           { role: 'assistant', content: content.length ? content : [{ type: 'text', text: '(no reply)' }] },
           { role: 'user', content: buildGapNudge(gaps) },
