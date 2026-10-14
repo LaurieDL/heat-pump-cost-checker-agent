@@ -5,9 +5,10 @@ Two jobs, done in order:
 1. **Phase 1: content import.** Bring all of the content from the fidesq.com heat pump calculator page into this repo.
 2. **Phase 2: stack refactor.** Move to Next.js, Tailwind CSS, Express/Node, Jest, Vite and anything else worth adding, after a written plan is approved.
 
-**How to use it.** Start a Claude session that can reach this repo, attach the markdown of
-https://fidesq.com/heat-pump-cost-calculator.html, and paste everything below the line, or say:
-"Read `docs/content-import-and-stack-refactor.md` and follow it." Claude starts with section 3
+**How to use it.** Start a Claude session that can reach this repo and paste everything below
+the line, or say: "Read `docs/content-import-and-stack-refactor.md` and follow it." Nothing needs
+attaching: Phase 1 reads the live page at https://fidesq.com/heat-pump-cost-calculator.html.
+Claude starts with section 3
 (orient), then Phase 1, and only starts Phase 2 once Phase 1 is merged and you agree.
 
 **Related plans in this folder**
@@ -69,7 +70,7 @@ Briefly, in plain English:
 * How to update the figures when the calculator changes, for example a new Ofgem price cap: change the heat-pump-plugin source, run its build script, publish the new file on fidesq.com, copy it over core/heat-pump-core.js here, run the tests (they check the figures against the site), and update the "checked" dates. If you don't know where the plugin lives, ask me.
 
 ## 5. Phase 1: bring over all the page content
-The attached markdown is the full content of https://fidesq.com/heat-pump-cost-calculator.html. If you can, also fetch the live page and tell me about anything the markdown is missing.
+The source is the live page: https://fidesq.com/heat-pump-cost-calculator.html. Fetch it and read all of it, including the FAQ and the FAQPage JSON-LD in the page's source. Fetch tools sometimes summarise a page or drop script blocks, so check you have the exact wording, figures and JSON-LD. If you can't get them exactly, say so and ask me to attach the page's HTML (in a browser: right-click, View page source, save the file) rather than guessing or retyping from memory. If I attach something, treat the live page as the authority where they differ, and tell me about the differences.
 
 1. Make a table of every section, table, figure, source link and "checked" date on the page, marking each present, partly present or missing in the repo and where it lives. Show me that table and wait for my OK before changing anything.
 2. Add everything missing, keeping wording, figures, sources and dates exactly as on fidesq.com:
