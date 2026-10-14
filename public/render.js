@@ -23,16 +23,16 @@ function headCard(d) {
   const replacing = current && ['gas', 'oil', 'lpg'].includes(current.fuel) ? 'replacing your ' + current.label.toLowerCase() : 'a new boiler';
   const price = d.installAfterGrant || d.installBeforeGrant;
   const line = !d.installAfterGrant
-    ? `No grant. About ${fmtGbp(v.gapBeforeGrant)} more than ${replacing}.`
+    ? `${g.claimant ? 'Before the grant, which your landlord would claim.' : 'No grant.'} About ${fmtGbp(v.gapBeforeGrant)} more than ${replacing}.`
     : v.gapAfterGrant === 0
       ? `After the ${fmtGbp(g.amount)} grant. About the same as ${replacing}.`
       : `After the ${fmtGbp(g.amount)} grant. About ${fmtGbp(v.gapAfterGrant)} more than ${replacing}.`;
   const before = d.installAfterGrant
     ? `Before the grant: ${fmtGbp(d.installBeforeGrant.low)} to ${fmtGbp(d.installBeforeGrant.high)} for a typical ${escHtml(d.size.band)} system.`
     : `Full installed price for a typical ${escHtml(d.size.band)} system.`;
-  const yes = g.status === 'likely' || g.status === 'check';
+  const yes = g.status === 'likely' || g.status === 'check' || Boolean(g.claimant);
   const pill = g.status === 'likely' ? `Likely to get the ${fmtGbp(g.amount)} grant`
-    : g.status === 'check' ? `May get the ${fmtGbp(g.amount)} grant` : g.status === 'none' ? 'No grant in Northern Ireland' : 'Unlikely to get the grant';
+    : g.status === 'check' ? `May get the ${fmtGbp(g.amount)} grant` : g.status === 'none' ? 'No grant in Northern Ireland' : g.availability || 'Unlikely to get the grant';
   return `<div class="result-head">
     <p class="eyebrow">Heat pump estimate</p>
     <h2>${escHtml(d.home.description)}</h2>
@@ -66,8 +66,9 @@ function grantCard(d) {
     sub = "You'd pay the full installed price. Some help exists for lower-income households.";
     details = [];
   } else {
-    cls = 'no'; pill = 'Unlikely';
-    title = "You're unlikely to get a grant";
+    cls = g.claimant ? 'yes' : 'no';
+    pill = g.claimant ? 'Your landlord' : g.availability ? 'Not available' : 'Unlikely';
+    title = escHtml(g.availability || "You're unlikely to get a grant");
     sub = escHtml(g.reasons[0] || '');
     details = g.reasons.slice(1);
   }

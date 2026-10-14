@@ -215,6 +215,7 @@ export function summarizeEstimate(d) {
       amount: d.grant.amount,
       upTo: d.grant.upTo ?? null,
       deadline: d.grant.deadline ?? null,
+      availability: d.grant.availability ?? null,
       reasons: d.grant.reasons,
     },
     installAfterGrant: d.installAfterGrant,
