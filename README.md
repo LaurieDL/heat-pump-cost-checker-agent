@@ -31,7 +31,7 @@ estimate cards           ◀── reply, details ─  tools (shared/agent-tools
 | `shared/prompt.js` | The assistant's instructions and background facts. |
 | `shared/place.js` | Postcode area → nation, ported from the site. Only the first half of a postcode is kept. |
 | `server/` | Express server: static files, `/api/chat`, rate limits, CORS, security headers. Express is the only dependency. |
-| `public/` | The page. `transport.js` is the only part that knows where the agent runs. |
+| `public/` | The page. `transport.js` is the only part that knows where the agent runs. `fonts/` holds the self-hosted fonts (SIL Open Font Licence, licence texts alongside); the embedded prototype build still loads Google Fonts. |
 | `prototype/`, `scripts/build-prototype.mjs` | Builds a one-file version that runs inside claude.ai for demos. |
 
 ## Run it locally

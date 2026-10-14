@@ -41,7 +41,14 @@ for (const [name, src] of [['core', core], ['bundle', bundle]]) {
   if (/<\/script/i.test(src)) throw new Error(`${name} contains </script>`);
 }
 
+// The standalone page serves its own fonts. The embedded copy has nowhere to host them, so it keeps
+// loading them from Google Fonts, exactly as before.
+const GOOGLE_FONTS = `<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@500;600;700&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">`;
+
 const out = `${head}
+${GOOGLE_FONTS}
 <style>
 ${read('public/styles.css')}
 </style>
