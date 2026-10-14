@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
+import { readFile } from 'node:fs/promises';
 import { createServer, readConfig, validateMessages } from '../server/server.js';
+import { pickEncoding } from '../server/compress.js';
 
 const silent = { error() {}, log() {} };
 
@@ -181,6 +184,72 @@ test('static files and security headers', async () => {
     assert.equal((await fetch(base + '/.env')).status, 404);
     assert.equal((await fetch(base + '/')).headers.get('x-powered-by'), null);
   });
+});
+
+test('static files are compressed when the browser accepts it, and cached sensibly', async () => {
+  await withServer({}, {}, async (base) => {
+    const get = (url, enc) => fetch(base + url, { headers: { 'accept-encoding': enc } });
+    const plain = Buffer.from(await (await get('/app.js', 'identity')).arrayBuffer());
+    for (const enc of ['br', 'gzip']) {
+      const res = await get('/app.js', enc);
+      assert.equal(res.headers.get('content-encoding'), enc);
+      assert.match(res.headers.get('vary'), /Accept-Encoding/i);
+      assert.match(res.headers.get('etag'), /^W\//, 'compressed copies carry a weak ETag');
+      assert.deepEqual(Buffer.from(await res.arrayBuffer()), plain, 'decompresses to the original bytes');
+    }
+    const none = await get('/app.js', 'identity');
+    assert.equal(none.headers.get('content-encoding'), null);
+    assert.match(none.headers.get('vary'), /Accept-Encoding/i);
+    assert.equal((await get('/app.js', 'gzip;q=0, br;q=0')).headers.get('content-encoding'), null, 'q=0 refuses an encoding');
+    for (const url of ['/', '/styles.css', '/core/heat-pump-core.js', '/shared/agent-tools.js']) {
+      assert.equal((await get(url, 'br')).headers.get('content-encoding'), 'br', url);
+    }
+    // Caching: the page is re-checked every time, everything else is reusable for five minutes.
+    assert.equal((await get('/', 'identity')).headers.get('cache-control'), 'no-cache');
+    for (const url of ['/app.js', '/styles.css', '/core/heat-pump-core.js', '/shared/place.js']) {
+      assert.equal((await get(url, 'identity')).headers.get('cache-control'), 'public, max-age=300', url);
+    }
+    // A revalidation is a bodiless 304 and is not compressed.
+    const first = await get('/app.js', 'gzip');
+    // (node's fetch adds Cache-Control: no-cache to conditional requests, so use plain http here.)
+    const again = await new Promise((resolve, reject) => {
+      http.get(base + '/app.js', { headers: { 'accept-encoding': 'gzip', 'if-none-match': first.headers.get('etag') } }, resolve).on('error', reject);
+    });
+    again.resume();
+    assert.equal(again.statusCode, 304);
+    assert.equal(again.headers['content-encoding'], undefined);
+    // The API is never compressed or cached.
+    assert.equal((await get('/healthz', 'br')).headers.get('content-encoding'), null);
+    assert.equal((await get('/healthz', 'br')).headers.get('cache-control'), 'no-store');
+  });
+});
+
+test('pickEncoding prefers brotli, then gzip, and honours q=0', () => {
+  assert.equal(pickEncoding('gzip, deflate, br, zstd'), 'br');
+  assert.equal(pickEncoding('gzip, deflate'), 'gzip');
+  assert.equal(pickEncoding('br;q=0, gzip'), 'gzip');
+  assert.equal(pickEncoding('*'), 'br');
+  assert.equal(pickEncoding('identity'), null);
+  assert.equal(pickEncoding(undefined), null);
+});
+
+test('index.html preloads every module app.js pulls in, and nothing else', async () => {
+  const root = new URL('..', import.meta.url);
+  const html = await readFile(new URL('public/index.html', root), 'utf8');
+  const hinted = [...html.matchAll(/<link rel="modulepreload" href="([^"]+)"/g)].map((m) => m[1]).sort();
+  const seen = new Set();
+  const walk = async (url) => {
+    if (seen.has(url)) return;
+    seen.add(url);
+    const file = url.startsWith('/shared/') ? url.slice(1) : `public${url}`; // same mapping the server uses
+    const src = await readFile(new URL(file, root), 'utf8');
+    for (const m of src.matchAll(/^import .* from '([^']+)'/gm)) {
+      await walk(new URL(m[1], `http://x${url}`).pathname);
+    }
+  };
+  await walk('/app.js');
+  seen.delete('/app.js'); // the entry script has its own <script> tag
+  assert.deepEqual(hinted, [...seen].sort());
 });
 
 // ── The question loop ─────────────────────────────────────────
