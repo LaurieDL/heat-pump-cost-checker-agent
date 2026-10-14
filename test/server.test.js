@@ -383,3 +383,28 @@ test('loop: no request ever forces a tool with tool_choice tool or any', async (
     assert.ok(!['tool', 'any'].includes(b.tool_choice?.type), `forced tool_choice sent: ${JSON.stringify(b.tool_choice)}`);
   }
 });
+
+test('fonts are served from this site, and the CSP allows no outside font or style hosts', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const root = new URL('..', import.meta.url);
+  const html = await readFile(new URL('public/index.html', root), 'utf8');
+  assert.doesNotMatch(html, /googleapis|gstatic/, 'the page no longer calls Google Fonts');
+  const css = await readFile(new URL('public/fonts/fonts.css', root), 'utf8');
+  const files = [...css.matchAll(/url\('([^']+)'\)/g)].map((m) => m[1]);
+  assert.equal(files.length, 11);
+  const preloads = [...html.matchAll(/<link rel="preload" href="([^"]+)" as="font"/g)].map((m) => m[1]);
+  assert.ok(preloads.length > 0 && preloads.every((f) => files.includes(f)), 'every preload is a declared font');
+  await withServer({}, {}, async (base) => {
+    const page = await fetch(base + '/');
+    const csp = page.headers.get('content-security-policy');
+    assert.match(csp, /font-src 'self'(;|$)/);
+    assert.match(csp, /style-src 'self'(;|$)/);
+    assert.doesNotMatch(csp, /google|gstatic/);
+    for (const f of ['/fonts/fonts.css', ...files]) {
+      const res = await fetch(base + f);
+      assert.equal(res.status, 200, f);
+      assert.ok((await res.arrayBuffer()).byteLength > 1000, f);
+    }
+    assert.equal((await fetch(base + files[0])).headers.get('content-type'), 'font/woff2');
+  });
+});

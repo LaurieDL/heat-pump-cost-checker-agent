@@ -7,10 +7,13 @@
 <title>Heat Pump Cost Checker</title>
 <meta name="description" content="Describe your home in plain English and see what an air source heat pump would cost after the grant, and what it would cost to run.">
 <meta name="theme-color" content="#0B1220">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500&amp;family=Instrument+Sans:wght@500;600;700&amp;family=Instrument+Serif:ital@0;1&amp;display=swap">
 <!-- page:head:end -->
+<!-- Fonts are served from this site (public/fonts), so there are no calls to Google. Preload the three
+     used above the fold: body text, the bold headline, and the italic second line of the headline. -->
+<link rel="preload" href="/fonts/geist-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/instrument-sans-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/instrument-serif-latin-400-italic.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/fonts.css">
 <!-- Where the page sends chat messages. Empty = this service. Set it when the page lives on fidesq.com. -->
 <meta name="hp-api-base" content="">
 <link rel="stylesheet" href="/styles.css">
