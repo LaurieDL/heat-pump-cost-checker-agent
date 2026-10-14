@@ -304,7 +304,8 @@ export function createAgentTools({
         if (missing.length) throw new Error(`Still need: ${missing.join(', ')}. Ask the visitor for these first.`);
         const d = core.estimate(details, today);
         onCheck({ label: `Priced a typical ${d.size.band} install`, source: 'DESNZ Boiler Upgrade Scheme statistics' });
-        onCheck({ label: `Grant: ${d.grant.scheme}, ${d.grant.status}`, source: 'GOV.UK' });
+        // When the visitor can't claim, say where the grant stands for the home, not 'unlikely' (Laurie, 14 Oct 2026).
+        onCheck({ label: `${d.grant.scheme}: ${d.grant.availability ?? d.grant.status}`, source: 'GOV.UK' });
         onCheck({ label: `Running costs (${d.running.basis})`, source: 'Ofgem price cap, Oct–Dec 2026' });
         return { ...summarizeEstimate(d), stillToAsk: gapsForModel(findGaps(details, getAsked())) };
       },

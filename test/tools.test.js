@@ -157,3 +157,15 @@ test('fallbackQuestion asks the first gap with a fixed question, or nothing', ()
   assert.deepEqual(asked, { bedrooms: 1 });
   assert.equal(fallbackQuestion({ ...SEMI, annualHeatingCostGbp: 900 }, {}), null);
 });
+
+test('the grant line says where the grant stands when the visitor can\'t claim it', () => {
+  const grantLine = (details) => {
+    const checks = [];
+    const tools = createAgentTools({ core, getDetails: () => details, setDetails: () => {}, onCheck: (c) => checks.push(c), today: TODAY });
+    tools[1].execute({});
+    return checks.find((c) => c.source === 'GOV.UK').label;
+  };
+  assert.equal(grantLine({ ...SEMI, ownership: 'tenant' }), 'Boiler Upgrade Scheme: Your landlord is likely to get the £7,500 grant');
+  assert.equal(grantLine({ ...SEMI, ownership: 'social_housing' }), "Boiler Upgrade Scheme: The grant isn't available for social housing");
+  assert.equal(grantLine(SEMI), 'Boiler Upgrade Scheme: likely');
+});
