@@ -351,6 +351,39 @@ test('loop: a second question in one turn is refused', async () => {
   assert.deepEqual(r.asked, { place: 1 });
 });
 
+// Sonnet 5.5, Opus 5.5 and Fable 5.1 return a 400 for tool_choice type 'tool' or 'any',
+// which fails the whole turn. Run every path that sets tool_choice and check each request.
+test('loop: no request ever forces a tool with tool_choice tool or any', async () => {
+  const bodies = [];
+  const run = async (replies, opts = {}) => {
+    const api = scripted(replies);
+    const r = await runChatTurn({ core: loopCore, messages: INVERNESS_SAYS, details: {}, apiKey: 'k', model: 'm', fetchImpl: api.fetchImpl, ...opts });
+    bodies.push(...api.calls);
+    return r;
+  };
+  const noted = { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Noted.' }] };
+
+  // Nudge, then the fixed question when the assistant still asks nothing.
+  await run([recordInverness, noted, noted]);
+  // The nudge lands on the last round: it must still be allowed to ask.
+  const last = await run([noted, (body) => {
+    assert.equal(body.tool_choice, undefined, 'the nudge round can call ask_visitor');
+    return { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'a1', name: 'ask_visitor', input: { field: 'place', question: 'Where is it?' } }] };
+  }], { maxToolRounds: 1 });
+  assert.equal(last.question.question, 'Where is it?');
+  // Out of tool rounds with no nudge: the last round answers with tool_choice none.
+  await run([recordInverness, noted], { maxToolRounds: 1 });
+  // The full HTTP chat path.
+  const api = fakeAnthropic();
+  await withServer({}, { fetchImpl: api.fetchImpl }, async (base) => assert.equal((await chat(base, HELLO)).status, 200));
+  bodies.push(...api.calls.map((c) => c.body));
+
+  assert.ok(bodies.some((b) => b.tool_choice?.type === 'none'), 'tool_choice none is still used on the last round');
+  for (const b of bodies) {
+    assert.ok(!['tool', 'any'].includes(b.tool_choice?.type), `forced tool_choice sent: ${JSON.stringify(b.tool_choice)}`);
+  }
+});
+
 test('fonts are served from this site, and the CSP allows no outside font or style hosts', async () => {
   const { readFile } = await import('node:fs/promises');
   const root = new URL('..', import.meta.url);
